@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Arcade Runner: Red Bullets — Enhanced Edition</title>
+<style>
+  body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}
+  canvas{image-rendering:pixelated;border:2px solid #333}
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="400"></canvas>
+<script>
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+
+// Helper to create and preload audio reliably
+function createAudio(url) {
+    const audio = new Audio(url);
+    audio.loaded = false;
+    audio.addEventListener('canplaythrough', () => {
+        audio.loaded = true;
+    }, { once: true });
+    // Attempt to load metadata immediately to start preloading
+    audio.load(); 
+    return audio;
+}
+
+// Audio setup
+const jumpSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-video-game-jump-arcade-212.mp3');
+const shootSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-jump-223.mp3');
+const crashSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-game-over-213.mp3');
+const enemyDestroySound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-arcade-explosion-169.mp3');
+const swordSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-sword-hit-arcade-209.mp3');
+const bgMusic=createAudio('https://assets.mixkit.co/music/preview/mixkit-arcade-game-loop-221.mp3');
+
+bgMusic.loop=true;
+bgMusic.volume=0.28;
+let audioStarted=false;
+
+// Play wrapper function to handle errors and loaded state
+function safePlay(audioElement) {
+    if (audioElement.loaded) {
+        try {
+            // Stop and restart for sound effects to ensure they play immediately
+            if (audioElement !== bgMusic) {
+                audioElement.currentTime = 0;
+            }
+            audioElement.play().catch(e => {
+                // Log silent errors like 'The user did not interact with the document'
+                // console.warn('Audio playback prevented:', e.message); 
+            });
+        } catch (e) {
+            // Catches sync errors, though async catch above handles most
+            console.error("Error playing audio:", e);
+        }
+    }
+}
+
+function startAudio(){
+    if(!audioStarted){
+        safePlay(bgMusic);
+        audioStarted=true;
+    }
+}
+
+// Game state
+let player={x:50,y:300,w:16,h:32,vy:0,jumping:false,frame:0,swinging:false,swingFrame:0,recoil:0};
+let gravity=1,jumpPower=-18,fastFallPower=3;
+let obstacles=[],clouds=[],bullets=[],enemies=[],sparks=[],muzzleFlashes=[],stars=[],planets=[],dusts=[];
+let score=0,highScore=0,speed=5,gameOver=false,frameCount=0;
+let keysDown={},shootCooldown=0,started=false,shake=0;
+
+// NEW STATE FLAG: Ensures game is in a state to accept a start command after reset
+let readyToStart = true; 
+
+const STAR_COUNT=80;
+const PLANET_COUNT=3;
+for(let i=0;i<STAR_COUNT;i++)stars.push({x:Math.random()*800,y:Math.random()*380,size:1+Math.random()*2,speed:0.2+Math.random()*0.3});
+for(let i=0;i<PLANET_COUNT;i++)planets.push({x:Math.random()*800,y:20+Math.random()*100,size:30+Math.random()*40,speed:0.08+Math.random()*0.12,hue:200+Math.random()*40});
+
+function applyShake(){if(shake>0){const sx=(Math.random()-0.5)*shake;const sy=(Math.random()-0.5)*shake;ctx.translate(sx,sy);shake=Math.max(0,shake-0.5);}}
+
+function drawStars(){ctx.fillStyle='#111';ctx.fillRect(0,0,800,400);stars.forEach(s=>{ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(s.x,s.y,s.size,s.size);});planets.forEach(p=>{ctx.fillStyle=`hsl(${p.hue} 70% 45%)`;ctx.beginPath();ctx.ellipse(p.x,p.y,p.size,p.size*0.6,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(255,255,255,0.06)';ctx.beginPath();ctx.ellipse(p.x-6,p.y-6,p.size*0.5,p.size*0.3,0,0,Math.PI*2);ctx.fill();});}
+function drawGround(){ctx.fillStyle='green';ctx.fillRect(0,332,800,16);}
+function drawClouds(){ctx.fillStyle='gray';clouds.forEach(c=>ctx.fillRect(c.x,c.y,c.size,c.size/2));}
+
+function drawPlayer(){let recoilOffset=player.recoil>0?-2:0;ctx.fillStyle='white';ctx.fillRect(player.x+recoilOffset,player.y-16,player.w,player.h);ctx.fillStyle='black';ctx.fillRect(player.x+2+recoilOffset,player.y-12,12,4);ctx.fillStyle='white';let legSwing=Math.sin(player.frame*0.3)*2;ctx.fillRect(player.x-2+recoilOffset,player.y+16+legSwing,4,8);ctx.fillRect(player.x+14+recoilOffset,player.y+16-legSwing,4,8);ctx.fillStyle='blue';ctx.fillRect(player.x-4+recoilOffset,player.y-10,4,2);if(player.swinging){ctx.strokeStyle='silver';ctx.lineWidth=4;let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+swingLength*Math.cos(angle),sy-swingLength*Math.sin(angle));ctx.stroke();}}
+
+function drawEnemies(){enemies.forEach(e=>{if(e.exploding>0){let progress=7-e.exploding;let offset=progress*2;if(e.exploding===1){ctx.fillStyle='white';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();}else{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12-offset,e.y+12,7,Math.PI/2,Math.PI*3/2);ctx.arc(e.x+12+offset,e.y+12,7,-Math.PI/2,Math.PI/2);ctx.fill();}e.exploding--;if(e.exploding===0)e.remove=true;}else{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();ctx.strokeStyle='lightyellow';ctx.beginPath();ctx.ellipse(e.x+12,e.y+12,18,7,Math.PI/6,0,Math.PI*2);ctx.stroke();}});enemies=enemies.filter(e=>!e.remove&&e.x>-50);}
+
+function drawBullets(){bullets.forEach(b=>{for(let t=0;t<3;t++){let tx=b.x-t*4;ctx.fillStyle=`rgba(255,50,50,${0.12*(3-t)})`;ctx.fillRect(tx,b.y-2,6,3);}ctx.fillStyle='red';ctx.fillRect(b.x,b.y-2,8,4);});}
+function drawSparks(){sparks.forEach(s=>{ctx.fillStyle=`rgba(255,${200+Math.random()*55},0,${s.life/7})`;ctx.fillRect(s.x,s.y,2,2);});}
+function drawMuzzleFlashes(){muzzleFlashes.forEach(f=>{ctx.fillStyle='white';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.fillStyle='orange';ctx.fillRect(f.x,f.y+1,f.w-1,f.h-2);});}
+function drawDust(){dusts.forEach(d=>{ctx.fillStyle=`rgba(120,80,40,${d.life/12})`;ctx.fillRect(d.x,d.y,3,2);});}
+function drawText(){ctx.fillStyle='white';ctx.font='16px monospace';ctx.fillText('Score:'+score,650,20);ctx.fillText('High:'+highScore,650,40);if(!started&&!gameOver){ctx.fillText('Press W to jump, Space to shoot, D to swing',50,200);}if(gameOver){ctx.fillText('Game Over! Press W to jump, Space to shoot, D to swing',50,200);}}
+
+function spawnObstacle(){let h=40+Math.random()*20;obstacles.push({x:800,y:332,w:48,h:h});}
+function spawnCloud(){clouds.push({x:800,y:Math.random()*100+50,size:16+Math.random()*8});}
+function spawnEnemy(){let yPos=170+Math.random()*100;let baseSpeed=speed+1.1+Math.random()*0.7;enemies.push({x:800,y:yPos,w:28,h:28,vy:Math.random()*1-0.5,vx:baseSpeed,exploding:0,remove:false});}
+function spawnSparks(x,y){for(let i=0;i<10;i++){sparks.push({x:x,y:y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:7});}}
+function spawnMuzzleFlash(){let flashWidth=4+Math.random()*4;muzzleFlashes.push({x:player.x+player.w,y:player.y+player.h/2-15,w:flashWidth,h:4,life:2});}
+
+function update(){if(gameOver||!started)return;player.frame++;player.vy+=gravity;if(keysDown['KeyS']&&player.jumping)player.vy+=fastFallPower;let wasAir=player.jumping;player.y+=player.vy;if(player.y>300){player.y=300;player.vy=0;player.jumping=false;if(wasAir){for(let i=0;i<6;i++)dusts.push({x:player.x+6+Math.random()*8,y:player.y+18,vx:(Math.random()-0.5)*2,vy:-Math.random()*2,life:12});}}
+if(frameCount%70===0)spawnObstacle();if(frameCount%200===0)spawnCloud();if(frameCount%80===0)spawnEnemy();if(frameCount%240===0){let change=(Math.random()*2-1)*1.5;speed+=change;if(speed<3)speed=3;if(speed>10)speed=10;}
+obstacles.forEach(o=>o.x-=speed);obstacles=obstacles.filter(o=>o.x+o.w>0);clouds.forEach(c=>c.x-=1);clouds=clouds.filter(c=>c.x+c.size>0);stars.forEach(s=>{s.x-=s.speed;if(s.x<0)s.x=800;});planets.forEach(p=>{p.x-=p.speed;if(p.x<-p.size)p.x=800+Math.random()*200;});
+enemies.forEach(e=>{if(!e.exploding){e.x-=e.vx;e.y+=e.vy;if(e.y<150||e.y>300)e.vy*=-1;}});
+bullets.forEach((b,i)=>{b.x+=12;sparks.push({x:b.x-2,y:b.y,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:5});enemies.forEach(e=>{if(!e.exploding&&Math.abs(b.x-(e.x+12))<16&&Math.abs(b.y-(e.y+12))<16){e.exploding=7;safePlay(enemyDestroySound);spawnSparks(e.x+12,e.y+12);b.remove=true;score+=12;shake=Math.max(shake,6);}});});bullets=bullets.filter(b=>!b.remove&&b.x<820);
+if(player.swinging){let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;enemies.forEach(e=>{let ex=e.x+12,ey=e.y+12;let dx=ex-sx,dy=ey-sy;let dist=Math.sqrt(dx*dx+dy*dy);if(!e.exploding&&dist<swingLength+12){e.exploding=7;safePlay(enemyDestroySound);spawnSparks(e.x+12,e.y+12);score+=12;shake=Math.max(shake,5);}});player.swingFrame++;if(player.swingFrame>5){player.swinging=false;player.swingFrame=0;}}
+enemies=enemies.filter(e=>!e.remove);
+if(player.recoil>0)player.recoil--;sparks.forEach((s,i)=>{s.x+=s.vx;s.y+=s.vy;s.vx*=0.95;s.vy*=0.95;s.life--;if(s.life<=0)sparks.splice(i,1);});muzzleFlashes.forEach((f,i)=>{f.life--;if(f.life<=0)muzzleFlashes.splice(i,1);});dusts.forEach((d,i)=>{d.x+=d.vx;d.y+=d.vy;d.vy+=0.2;d.life--;if(d.life<=0)dusts.splice(i,1);});if(shootCooldown>0)shootCooldown--;obstacles.forEach(o=>{if(player.x<o.x+o.w&&player.x+player.w>o.x&&player.y+player.h>o.y-o.h){gameOver=true;safePlay(crashSound);if(score>highScore)highScore=score;shake=12;}});enemies.forEach(e=>{if(!e.exploding&&player.x<e.x+e.w&&player.x+player.w>e.x&&player.y+player.h>e.y&&player.y<e.y+e.h){gameOver=true;safePlay(crashSound);if(score>highScore)highScore=score;shake=14;}});score++;if(score%150===0)speed+=0.5;}
+
+function jump(){if(!player.jumping&&!gameOver){player.vy=jumpPower;player.jumping=true;safePlay(jumpSound);startAudio();}}
+function shoot(){if(!gameOver&&shootCooldown===0&&started){bullets.push({x:player.x+player.w+4,y:player.y+player.h/2-14});spawnMuzzleFlash();safePlay(shootSound);startAudio();shootCooldown=6;player.recoil=3;}}
+function swing(){if(!player.swinging&&!gameOver&&started){player.swinging=true;player.swingFrame=0;safePlay(swordSound);startAudio();}}
+function resetGame(){
+    gameOver=false;
+    obstacles=[];
+    clouds=[];
+    enemies=[];
+    bullets=[];
+    sparks=[];
+    muzzleFlashes=[];
+    player.y=300;
+    player.vy=0;
+    score=0;
+    speed=5;
+    frameCount=0;
+    player.recoil=0;
+    started=false;
+    // CRITICAL FIX: Set the flag on reset
+    readyToStart = true; 
+}
+
+document.addEventListener('keydown',e=>{
+    keysDown[e.code]=true;
+    if(e.code==='KeyW'){
+        if(gameOver){
+            resetGame();
+        } else if(!started){
+            // NEW LOGIC: Only allow start if the flag is set (meaning we just loaded or reset)
+            if (readyToStart) {
+                started=true;
+                readyToStart = false; // Prevent immediate restart
+                startAudio();
+            }
+        } else {
+            jump();
+        }
+    }
+    if(e.code==='Space'){shoot();}
+    if(e.code==='KeyD'){swing();}
+});
+
+document.addEventListener('keyup',e=>{
+    keysDown[e.code]=false;
+    // NEW LOGIC: The keyup event is what sets the flag for the next keydown to start the game.
+    // This allows the initial 'W' press from the D-pad to reset the game, and the *release* of 'W'
+    // to prime the game for the next *true* press.
+    if(e.code==='KeyW' && !started && !gameOver){
+        readyToStart = true;
+    }
+});
+
+function drawObstacles(){obstacles.forEach(o=>{ctx.fillStyle='gray';ctx.beginPath();ctx.moveTo(o.x,o.y);ctx.lineTo(o.x+o.w/2,o.y-o.h);ctx.lineTo(o.x+o.w,o.y);ctx.closePath();ctx.fill();ctx.fillStyle='darkgray';ctx.beginPath();ctx.arc(o.x+o.w/2,o.y-o.h/2,o.h/4,0,Math.PI*2);ctx.fill();});}
+
+function loop(){frameCount++;ctx.save();applyShake();drawStars();drawGround();drawClouds();drawPlayer();drawObstacles();drawEnemies();drawBullets();drawSparks();drawMuzzleFlashes();drawDust();drawText();ctx.restore();if(!started&&!gameOver){player.frame++;}update();requestAnimationFrame(loop);}
+loop();
+</script>
+</body>
+</html>
