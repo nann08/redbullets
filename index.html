@@ -16,64 +16,179 @@ const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d');
 ctx.imageSmoothingEnabled=false;
 
-// Helper to create and preload audio reliably
-function createAudio(url) {
-    const audio = new Audio(url);
-    audio.loaded = false;
-    audio.addEventListener('canplaythrough', () => {
-        audio.loaded = true;
-    }, { once: true });
-    // Attempt to load metadata immediately to start preloading
-    audio.load(); 
-    return audio;
-}
+// --- SYNTHESIZED AUDIO SYSTEM (No external files) ---
+const AudioSys = {
+    ctx: null,
+    noiseBuffer: null,
+    musicInterval: null,
+    musicNote: 0,
+    initialized: false,
 
-// Audio setup
-const jumpSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-video-game-jump-arcade-212.mp3');
-const shootSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-jump-223.mp3');
-const crashSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-game-over-213.mp3');
-const enemyDestroySound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-arcade-explosion-169.mp3');
-const swordSound=createAudio('https://assets.mixkit.co/sfx/preview/mixkit-sword-hit-arcade-209.mp3');
-const bgMusic=createAudio('https://assets.mixkit.co/music/preview/mixkit-arcade-game-loop-221.mp3');
+    init: function() {
+        if (this.initialized) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+        
+        // Create a noise buffer for explosions (still useful for other effects if needed)
+        const bufferSize = this.ctx.sampleRate * 2; 
+        this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = this.noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        this.initialized = true;
+    },
 
-bgMusic.loop=true;
-bgMusic.volume=0.28;
-let audioStarted=false;
+    playTone: function(freq, type, duration, vol=0.1) {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+    },
 
-// Play wrapper function to handle errors and loaded state
-function safePlay(audioElement) {
-    if (audioElement.loaded) {
-        try {
-            // Stop and restart for sound effects to ensure they play immediately
-            if (audioElement !== bgMusic) {
-                audioElement.currentTime = 0;
-            }
-            audioElement.play().catch(e => {
-                // Log silent errors like 'The user did not interact with the document'
-                // console.warn('Audio playback prevented:', e.message); 
-            });
-        } catch (e) {
-            // Catches sync errors, though async catch above handles most
-            console.error("Error playing audio:", e);
+    shoot: function() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+    },
+
+    jump: function() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(300, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+    },
+
+    explode: function() {
+        // CHANGED: Now uses a high-pitch sawtooth wave (like a mini-crash)
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth'; // Same gritty sound as crash
+        
+        // Start high (400Hz) and drop fast to 50Hz
+        osc.frequency.setValueAtTime(400, this.ctx.currentTime); 
+        osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.2);
+        
+        gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.2);
+    },
+
+    crash: function() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(100, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.5);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.5);
+    },
+    
+    sword: function() {
+        if (!this.ctx) return;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 1000;
+        const gain = this.ctx.createGain();
+        
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        src.start();
+        src.stop(this.ctx.currentTime + 0.1);
+    },
+
+    startMusic: function() {
+        if (this.musicInterval || !this.ctx) return;
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+
+        // Simple 8-bit Arpeggio
+        const bassLine = [110, 110, 164, 110, 130, 110, 196, 146]; // A2 scaleish
+        let noteIdx = 0;
+        
+        this.musicInterval = setInterval(() => {
+            // Re-check context state periodically
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            
+            // CHANGED: Square wave is buzzier and easier to hear than triangle
+            osc.type = 'square'; 
+            osc.frequency.value = bassLine[noteIdx % bassLine.length];
+            
+            // CHANGED: Increased volume
+            gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+            
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.1);
+            noteIdx++;
+        }, 150); // Speed
+    },
+
+    stopMusic: function() {
+        if (this.musicInterval) {
+            clearInterval(this.musicInterval);
+            this.musicInterval = null;
         }
     }
-}
+};
 
-function startAudio(){
-    if(!audioStarted){
-        safePlay(bgMusic);
-        audioStarted=true;
+function initAudio() {
+    AudioSys.init();
+    if (AudioSys.ctx && AudioSys.ctx.state === 'suspended') {
+        AudioSys.ctx.resume();
     }
 }
 
-// Game state
+// --- GAME STATE ---
 let player={x:50,y:300,w:16,h:32,vy:0,jumping:false,frame:0,swinging:false,swingFrame:0,recoil:0};
 let gravity=1,jumpPower=-18,fastFallPower=3;
 let obstacles=[],clouds=[],bullets=[],enemies=[],sparks=[],muzzleFlashes=[],stars=[],planets=[],dusts=[];
 let score=0,highScore=0,speed=5,gameOver=false,frameCount=0;
 let keysDown={},shootCooldown=0,started=false,shake=0;
-
-// NEW STATE FLAG: Ensures game is in a state to accept a start command after reset
 let readyToStart = true; 
 
 const STAR_COUNT=80;
@@ -89,7 +204,20 @@ function drawClouds(){ctx.fillStyle='gray';clouds.forEach(c=>ctx.fillRect(c.x,c.
 
 function drawPlayer(){let recoilOffset=player.recoil>0?-2:0;ctx.fillStyle='white';ctx.fillRect(player.x+recoilOffset,player.y-16,player.w,player.h);ctx.fillStyle='black';ctx.fillRect(player.x+2+recoilOffset,player.y-12,12,4);ctx.fillStyle='white';let legSwing=Math.sin(player.frame*0.3)*2;ctx.fillRect(player.x-2+recoilOffset,player.y+16+legSwing,4,8);ctx.fillRect(player.x+14+recoilOffset,player.y+16-legSwing,4,8);ctx.fillStyle='blue';ctx.fillRect(player.x-4+recoilOffset,player.y-10,4,2);if(player.swinging){ctx.strokeStyle='silver';ctx.lineWidth=4;let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+swingLength*Math.cos(angle),sy-swingLength*Math.sin(angle));ctx.stroke();}}
 
-function drawEnemies(){enemies.forEach(e=>{if(e.exploding>0){let progress=7-e.exploding;let offset=progress*2;if(e.exploding===1){ctx.fillStyle='white';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();}else{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12-offset,e.y+12,7,Math.PI/2,Math.PI*3/2);ctx.arc(e.x+12+offset,e.y+12,7,-Math.PI/2,Math.PI/2);ctx.fill();}e.exploding--;if(e.exploding===0)e.remove=true;}else{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();ctx.strokeStyle='lightyellow';ctx.beginPath();ctx.ellipse(e.x+12,e.y+12,18,7,Math.PI/6,0,Math.PI*2);ctx.stroke();}});enemies=enemies.filter(e=>!e.remove&&e.x>-50);}
+function drawEnemies(){
+    enemies.forEach(e=>{
+        if(e.exploding>0){
+            let progress=7-e.exploding;let offset=progress*2;
+            if(e.exploding===1){ctx.fillStyle='white';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();}
+            else{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12-offset,e.y+12,7,Math.PI/2,Math.PI*3/2);ctx.arc(e.x+12+offset,e.y+12,7,-Math.PI/2,Math.PI/2);ctx.fill();}
+            e.exploding--;if(e.exploding===0)e.remove=true;
+        }else{
+            ctx.fillStyle='orange';ctx.beginPath();ctx.arc(e.x+12,e.y+12,14,0,Math.PI*2);ctx.fill();
+            ctx.strokeStyle='lightyellow';ctx.beginPath();ctx.ellipse(e.x+12,e.y+12,18,7,Math.PI/6,0,Math.PI*2);ctx.stroke();
+        }
+    });
+    enemies=enemies.filter(e=>!e.remove&&e.x>-50);
+}
 
 function drawBullets(){bullets.forEach(b=>{for(let t=0;t<3;t++){let tx=b.x-t*4;ctx.fillStyle=`rgba(255,50,50,${0.12*(3-t)})`;ctx.fillRect(tx,b.y-2,6,3);}ctx.fillStyle='red';ctx.fillRect(b.x,b.y-2,8,4);});}
 function drawSparks(){sparks.forEach(s=>{ctx.fillStyle=`rgba(255,${200+Math.random()*55},0,${s.life/7})`;ctx.fillRect(s.x,s.y,2,2);});}
@@ -103,48 +231,129 @@ function spawnEnemy(){let yPos=170+Math.random()*100;let baseSpeed=speed+1.1+Mat
 function spawnSparks(x,y){for(let i=0;i<10;i++){sparks.push({x:x,y:y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:7});}}
 function spawnMuzzleFlash(){let flashWidth=4+Math.random()*4;muzzleFlashes.push({x:player.x+player.w,y:player.y+player.h/2-15,w:flashWidth,h:4,life:2});}
 
-function update(){if(gameOver||!started)return;player.frame++;player.vy+=gravity;if(keysDown['KeyS']&&player.jumping)player.vy+=fastFallPower;let wasAir=player.jumping;player.y+=player.vy;if(player.y>300){player.y=300;player.vy=0;player.jumping=false;if(wasAir){for(let i=0;i<6;i++)dusts.push({x:player.x+6+Math.random()*8,y:player.y+18,vx:(Math.random()-0.5)*2,vy:-Math.random()*2,life:12});}}
-if(frameCount%70===0)spawnObstacle();if(frameCount%200===0)spawnCloud();if(frameCount%80===0)spawnEnemy();if(frameCount%240===0){let change=(Math.random()*2-1)*1.5;speed+=change;if(speed<3)speed=3;if(speed>10)speed=10;}
-obstacles.forEach(o=>o.x-=speed);obstacles=obstacles.filter(o=>o.x+o.w>0);clouds.forEach(c=>c.x-=1);clouds=clouds.filter(c=>c.x+c.size>0);stars.forEach(s=>{s.x-=s.speed;if(s.x<0)s.x=800;});planets.forEach(p=>{p.x-=p.speed;if(p.x<-p.size)p.x=800+Math.random()*200;});
-enemies.forEach(e=>{if(!e.exploding){e.x-=e.vx;e.y+=e.vy;if(e.y<150||e.y>300)e.vy*=-1;}});
-bullets.forEach((b,i)=>{b.x+=12;sparks.push({x:b.x-2,y:b.y,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:5});enemies.forEach(e=>{if(!e.exploding&&Math.abs(b.x-(e.x+12))<16&&Math.abs(b.y-(e.y+12))<16){e.exploding=7;safePlay(enemyDestroySound);spawnSparks(e.x+12,e.y+12);b.remove=true;score+=12;shake=Math.max(shake,6);}});});bullets=bullets.filter(b=>!b.remove&&b.x<820);
-if(player.swinging){let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;enemies.forEach(e=>{let ex=e.x+12,ey=e.y+12;let dx=ex-sx,dy=ey-sy;let dist=Math.sqrt(dx*dx+dy*dy);if(!e.exploding&&dist<swingLength+12){e.exploding=7;safePlay(enemyDestroySound);spawnSparks(e.x+12,e.y+12);score+=12;shake=Math.max(shake,5);}});player.swingFrame++;if(player.swingFrame>5){player.swinging=false;player.swingFrame=0;}}
-enemies=enemies.filter(e=>!e.remove);
-if(player.recoil>0)player.recoil--;sparks.forEach((s,i)=>{s.x+=s.vx;s.y+=s.vy;s.vx*=0.95;s.vy*=0.95;s.life--;if(s.life<=0)sparks.splice(i,1);});muzzleFlashes.forEach((f,i)=>{f.life--;if(f.life<=0)muzzleFlashes.splice(i,1);});dusts.forEach((d,i)=>{d.x+=d.vx;d.y+=d.vy;d.vy+=0.2;d.life--;if(d.life<=0)dusts.splice(i,1);});if(shootCooldown>0)shootCooldown--;obstacles.forEach(o=>{if(player.x<o.x+o.w&&player.x+player.w>o.x&&player.y+player.h>o.y-o.h){gameOver=true;safePlay(crashSound);if(score>highScore)highScore=score;shake=12;}});enemies.forEach(e=>{if(!e.exploding&&player.x<e.x+e.w&&player.x+player.w>e.x&&player.y+player.h>e.y&&player.y<e.y+e.h){gameOver=true;safePlay(crashSound);if(score>highScore)highScore=score;shake=14;}});score++;if(score%150===0)speed+=0.5;}
+function update(){
+    if(gameOver||!started)return;
+    player.frame++;
+    player.vy+=gravity;
+    if(keysDown['KeyS']&&player.jumping)player.vy+=fastFallPower;
+    let wasAir=player.jumping;
+    player.y+=player.vy;
+    if(player.y>300){
+        player.y=300;player.vy=0;player.jumping=false;
+        if(wasAir){
+            for(let i=0;i<6;i++)dusts.push({x:player.x+6+Math.random()*8,y:player.y+18,vx:(Math.random()-0.5)*2,vy:-Math.random()*2,life:12});
+        }
+    }
+    
+    if(frameCount%70===0)spawnObstacle();
+    if(frameCount%200===0)spawnCloud();
+    if(frameCount%80===0)spawnEnemy();
+    if(frameCount%240===0){let change=(Math.random()*2-1)*1.5;speed+=change;if(speed<3)speed=3;if(speed>10)speed=10;}
+    
+    obstacles.forEach(o=>o.x-=speed);obstacles=obstacles.filter(o=>o.x+o.w>0);
+    clouds.forEach(c=>c.x-=1);clouds=clouds.filter(c=>c.x+c.size>0);
+    stars.forEach(s=>{s.x-=s.speed;if(s.x<0)s.x=800;});
+    planets.forEach(p=>{p.x-=p.speed;if(p.x<-p.size)p.x=800+Math.random()*200;});
+    enemies.forEach(e=>{if(!e.exploding){e.x-=e.vx;e.y+=e.vy;if(e.y<150||e.y>300)e.vy*=-1;}});
+    
+    // Bullet Collisions
+    bullets.forEach((b,i)=>{
+        b.x+=12;
+        sparks.push({x:b.x-2,y:b.y,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:5});
+        enemies.forEach(e=>{
+            if(!e.exploding&&Math.abs(b.x-(e.x+12))<16&&Math.abs(b.y-(e.y+12))<16){
+                e.exploding=7;
+                AudioSys.explode(); // SOUND
+                spawnSparks(e.x+12,e.y+12);
+                b.remove=true;score+=12;shake=Math.max(shake,6);
+            }
+        });
+    });
+    bullets=bullets.filter(b=>!b.remove&&b.x<820);
+    
+    // Sword Collisions
+    if(player.swinging){
+        let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;
+        enemies.forEach(e=>{
+            let ex=e.x+12,ey=e.y+12;let dx=ex-sx,dy=ey-sy;let dist=Math.sqrt(dx*dx+dy*dy);
+            if(!e.exploding&&dist<swingLength+12){
+                e.exploding=7;
+                AudioSys.explode(); // SOUND
+                spawnSparks(e.x+12,e.y+12);
+                score+=12;shake=Math.max(shake,5);
+            }
+        });
+        player.swingFrame++;if(player.swingFrame>5){player.swinging=false;player.swingFrame=0;}
+    }
+    
+    enemies=enemies.filter(e=>!e.remove);
+    if(player.recoil>0)player.recoil--;
+    sparks.forEach((s,i)=>{s.x+=s.vx;s.y+=s.vy;s.vx*=0.95;s.vy*=0.95;s.life--;if(s.life<=0)sparks.splice(i,1);});
+    muzzleFlashes.forEach((f,i)=>{f.life--;if(f.life<=0)muzzleFlashes.splice(i,1);});
+    dusts.forEach((d,i)=>{d.x+=d.vx;d.y+=d.vy;d.vy+=0.2;d.life--;if(d.life<=0)dusts.splice(i,1);});
+    if(shootCooldown>0)shootCooldown--;
+    
+    // Crashes
+    obstacles.forEach(o=>{
+        if(player.x<o.x+o.w&&player.x+player.w>o.x&&player.y+player.h>o.y-o.h){
+            gameOver=true;
+            AudioSys.crash(); // SOUND
+            AudioSys.stopMusic();
+            if(score>highScore)highScore=score;shake=12;
+        }
+    });
+    enemies.forEach(e=>{
+        if(!e.exploding&&player.x<e.x+e.w&&player.x+player.w>e.x&&player.y+player.h>e.y&&player.y<e.y+e.h){
+            gameOver=true;
+            AudioSys.crash(); // SOUND
+            AudioSys.stopMusic();
+            if(score>highScore)highScore=score;shake=14;
+        }
+    });
+    score++;if(score%150===0)speed+=0.5;
+}
 
-function jump(){if(!player.jumping&&!gameOver){player.vy=jumpPower;player.jumping=true;safePlay(jumpSound);startAudio();}}
-function shoot(){if(!gameOver&&shootCooldown===0&&started){bullets.push({x:player.x+player.w+4,y:player.y+player.h/2-14});spawnMuzzleFlash();safePlay(shootSound);startAudio();shootCooldown=6;player.recoil=3;}}
-function swing(){if(!player.swinging&&!gameOver&&started){player.swinging=true;player.swingFrame=0;safePlay(swordSound);startAudio();}}
+function jump(){
+    if(!player.jumping&&!gameOver){
+        player.vy=jumpPower;player.jumping=true;
+        AudioSys.jump(); // SOUND
+        initAudio();
+    }
+}
+function shoot(){
+    if(!gameOver&&shootCooldown===0&&started){
+        bullets.push({x:player.x+player.w+4,y:player.y+player.h/2-14});
+        spawnMuzzleFlash();
+        AudioSys.shoot(); // SOUND
+        initAudio();
+        shootCooldown=6;player.recoil=3;
+    }
+}
+function swing(){
+    if(!player.swinging&&!gameOver&&started){
+        player.swinging=true;player.swingFrame=0;
+        AudioSys.sword(); // SOUND
+        initAudio();
+    }
+}
 function resetGame(){
-    gameOver=false;
-    obstacles=[];
-    clouds=[];
-    enemies=[];
-    bullets=[];
-    sparks=[];
-    muzzleFlashes=[];
-    player.y=300;
-    player.vy=0;
-    score=0;
-    speed=5;
-    frameCount=0;
-    player.recoil=0;
-    started=false;
-    // CRITICAL FIX: Set the flag on reset
-    readyToStart = true; 
+    gameOver=false;obstacles=[];clouds=[];enemies=[];bullets=[];sparks=[];muzzleFlashes=[];
+    player.y=300;player.vy=0;score=0;speed=5;frameCount=0;player.recoil=0;started=false;
+    readyToStart = true;
+    AudioSys.stopMusic();
 }
 
 document.addEventListener('keydown',e=>{
     keysDown[e.code]=true;
     if(e.code==='KeyW'){
+        initAudio();
         if(gameOver){
             resetGame();
         } else if(!started){
-            // NEW LOGIC: Only allow start if the flag is set (meaning we just loaded or reset)
             if (readyToStart) {
                 started=true;
-                readyToStart = false; // Prevent immediate restart
-                startAudio();
+                readyToStart = false;
+                AudioSys.startMusic();
             }
         } else {
             jump();
@@ -156,9 +365,6 @@ document.addEventListener('keydown',e=>{
 
 document.addEventListener('keyup',e=>{
     keysDown[e.code]=false;
-    // NEW LOGIC: The keyup event is what sets the flag for the next keydown to start the game.
-    // This allows the initial 'W' press from the D-pad to reset the game, and the *release* of 'W'
-    // to prime the game for the next *true* press.
     if(e.code==='KeyW' && !started && !gameOver){
         readyToStart = true;
     }
@@ -166,7 +372,16 @@ document.addEventListener('keyup',e=>{
 
 function drawObstacles(){obstacles.forEach(o=>{ctx.fillStyle='gray';ctx.beginPath();ctx.moveTo(o.x,o.y);ctx.lineTo(o.x+o.w/2,o.y-o.h);ctx.lineTo(o.x+o.w,o.y);ctx.closePath();ctx.fill();ctx.fillStyle='darkgray';ctx.beginPath();ctx.arc(o.x+o.w/2,o.y-o.h/2,o.h/4,0,Math.PI*2);ctx.fill();});}
 
-function loop(){frameCount++;ctx.save();applyShake();drawStars();drawGround();drawClouds();drawPlayer();drawObstacles();drawEnemies();drawBullets();drawSparks();drawMuzzleFlashes();drawDust();drawText();ctx.restore();if(!started&&!gameOver){player.frame++;}update();requestAnimationFrame(loop);}
+function loop(){
+    frameCount++;
+    ctx.save();
+    applyShake();
+    drawStars();drawGround();drawClouds();drawPlayer();drawObstacles();drawEnemies();drawBullets();drawSparks();drawMuzzleFlashes();drawDust();drawText();
+    ctx.restore();
+    if(!started&&!gameOver){player.frame++;}
+    update();
+    requestAnimationFrame(loop);
+}
 loop();
 </script>
 </body>
