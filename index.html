@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Arcade Runner: Red Bullets — Enhanced Edition</title>
+<title>Arcade Runner: Red Bullets — Hybrid Audio</title>
 <style>
   body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}
   canvas{image-rendering:pixelated;border:2px solid #333}
@@ -16,26 +16,34 @@ const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d');
 ctx.imageSmoothingEnabled=false;
 
-// --- SYNTHESIZED AUDIO SYSTEM (No external files) ---
+// --- HYBRID AUDIO SYSTEM ---
+// SFX are synthesized (code), Music is loaded from file (mp3)
 const AudioSys = {
     ctx: null,
     noiseBuffer: null,
-    musicInterval: null,
-    musicNote: 0,
     initialized: false,
+    
+    // LOAD MUSIC FILE HERE
+    // Ensure 'music.mp3' is in the same folder as this index.html
+    bgTrack: new Audio('./music.mp3'),
 
     init: function() {
         if (this.initialized) return;
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AudioContext();
         
-        // Create a noise buffer for explosions (still useful for other effects if needed)
+        // Setup noise buffer for synthesized explosions
         const bufferSize = this.ctx.sampleRate * 2; 
         this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
         const data = this.noiseBuffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
             data[i] = Math.random() * 2 - 1;
         }
+        
+        // Configure Background Music
+        this.bgTrack.loop = true;
+        this.bgTrack.volume = 0.5;
+
         this.initialized = true;
     },
 
@@ -84,19 +92,15 @@ const AudioSys = {
     },
 
     explode: function() {
-        // CHANGED: Now uses a high-pitch sawtooth wave (like a mini-crash)
+        // High-pitch sawtooth wave (mini-crash)
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.type = 'sawtooth'; // Same gritty sound as crash
-        
-        // Start high (400Hz) and drop fast to 50Hz
+        osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(400, this.ctx.currentTime); 
         osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.2);
-        
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
-        
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
@@ -138,41 +142,16 @@ const AudioSys = {
     },
 
     startMusic: function() {
-        if (this.musicInterval || !this.ctx) return;
-        if (this.ctx.state === 'suspended') this.ctx.resume();
-
-        // Simple 8-bit Arpeggio
-        const bassLine = [110, 110, 164, 110, 130, 110, 196, 146]; // A2 scaleish
-        let noteIdx = 0;
+        // 1. Resume AudioContext for SFX
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
         
-        this.musicInterval = setInterval(() => {
-            // Re-check context state periodically
-            if (this.ctx.state === 'suspended') this.ctx.resume();
-            
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            
-            // CHANGED: Square wave is buzzier and easier to hear than triangle
-            osc.type = 'square'; 
-            osc.frequency.value = bassLine[noteIdx % bassLine.length];
-            
-            // CHANGED: Increased volume
-            gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
-            
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start();
-            osc.stop(this.ctx.currentTime + 0.1);
-            noteIdx++;
-        }, 150); // Speed
+        // 2. Play External MP3
+        this.bgTrack.play().catch(e => console.log("Music waiting for interaction"));
     },
 
     stopMusic: function() {
-        if (this.musicInterval) {
-            clearInterval(this.musicInterval);
-            this.musicInterval = null;
-        }
+        this.bgTrack.pause();
+        this.bgTrack.currentTime = 0;
     }
 };
 
@@ -263,7 +242,7 @@ function update(){
         enemies.forEach(e=>{
             if(!e.exploding&&Math.abs(b.x-(e.x+12))<16&&Math.abs(b.y-(e.y+12))<16){
                 e.exploding=7;
-                AudioSys.explode(); // SOUND
+                AudioSys.explode(); // SFX
                 spawnSparks(e.x+12,e.y+12);
                 b.remove=true;score+=12;shake=Math.max(shake,6);
             }
@@ -278,7 +257,7 @@ function update(){
             let ex=e.x+12,ey=e.y+12;let dx=ex-sx,dy=ey-sy;let dist=Math.sqrt(dx*dx+dy*dy);
             if(!e.exploding&&dist<swingLength+12){
                 e.exploding=7;
-                AudioSys.explode(); // SOUND
+                AudioSys.explode(); // SFX
                 spawnSparks(e.x+12,e.y+12);
                 score+=12;shake=Math.max(shake,5);
             }
@@ -297,7 +276,7 @@ function update(){
     obstacles.forEach(o=>{
         if(player.x<o.x+o.w&&player.x+player.w>o.x&&player.y+player.h>o.y-o.h){
             gameOver=true;
-            AudioSys.crash(); // SOUND
+            AudioSys.crash(); // SFX
             AudioSys.stopMusic();
             if(score>highScore)highScore=score;shake=12;
         }
@@ -305,7 +284,7 @@ function update(){
     enemies.forEach(e=>{
         if(!e.exploding&&player.x<e.x+e.w&&player.x+player.w>e.x&&player.y+player.h>e.y&&player.y<e.y+e.h){
             gameOver=true;
-            AudioSys.crash(); // SOUND
+            AudioSys.crash(); // SFX
             AudioSys.stopMusic();
             if(score>highScore)highScore=score;shake=14;
         }
@@ -316,7 +295,7 @@ function update(){
 function jump(){
     if(!player.jumping&&!gameOver){
         player.vy=jumpPower;player.jumping=true;
-        AudioSys.jump(); // SOUND
+        AudioSys.jump(); // SFX
         initAudio();
     }
 }
@@ -324,7 +303,7 @@ function shoot(){
     if(!gameOver&&shootCooldown===0&&started){
         bullets.push({x:player.x+player.w+4,y:player.y+player.h/2-14});
         spawnMuzzleFlash();
-        AudioSys.shoot(); // SOUND
+        AudioSys.shoot(); // SFX
         initAudio();
         shootCooldown=6;player.recoil=3;
     }
@@ -332,7 +311,7 @@ function shoot(){
 function swing(){
     if(!player.swinging&&!gameOver&&started){
         player.swinging=true;player.swingFrame=0;
-        AudioSys.sword(); // SOUND
+        AudioSys.sword(); // SFX
         initAudio();
     }
 }
