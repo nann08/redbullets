@@ -284,15 +284,17 @@ function update(){
     // Smooth, randomized background transitions past 2000 score
     if(score >= 2000) {
         if(transitionTimer <= 0) {
-            targetTransition = Math.random() > 0.4 ? 1 : 0; // Randomly target bright or dark
-            transitionTimer = 120 + Math.random() * 300; // Wait 2 to 7 seconds before switching
+            // Force it to alternate between bright (1) and dark (0) so it always comes and goes
+            targetTransition = targetTransition === 1 ? 0 : 1; 
+            transitionTimer = 120 + Math.random() * 300; // Randomly wait 2 to 7 seconds before next switch
         } else {
             transitionTimer--;
         }
         currentTransition += (targetTransition - currentTransition) * 0.008;
     } else {
         currentTransition = 0;
-        targetTransition = 0;
+        targetTransition = 0; // Ensures it starts at 0
+        transitionTimer = 0;  // Ensures the very first check at 2000 triggers immediately
     }
     
     player.frame++;
