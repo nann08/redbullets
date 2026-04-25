@@ -169,6 +169,7 @@ let obstacles=[],clouds=[],bullets=[],enemies=[],sparks=[],muzzleFlashes=[],star
 let score=0,highScore=0,speed=5,gameOver=false,frameCount=0;
 let keysDown={},shootCooldown=0,started=false,shake=0;
 let readyToStart = true; 
+let currentTransition = 0, targetTransition = 0, transitionTimer = 0;
 
 const STAR_COUNT=80;
 const PLANET_COUNT=3;
@@ -177,11 +178,78 @@ for(let i=0;i<PLANET_COUNT;i++)planets.push({x:Math.random()*800,y:20+Math.rando
 
 function applyShake(){if(shake>0){const sx=(Math.random()-0.5)*shake;const sy=(Math.random()-0.5)*shake;ctx.translate(sx,sy);shake=Math.max(0,shake-0.5);}}
 
-function drawStars(){ctx.fillStyle='#111';ctx.fillRect(0,0,800,400);stars.forEach(s=>{ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(s.x,s.y,s.size,s.size);});planets.forEach(p=>{ctx.fillStyle=`hsl(${p.hue} 70% 45%)`;ctx.beginPath();ctx.ellipse(p.x,p.y,p.size,p.size*0.6,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(255,255,255,0.06)';ctx.beginPath();ctx.ellipse(p.x-6,p.y-6,p.size*0.5,p.size*0.3,0,0,Math.PI*2);ctx.fill();});}
-function drawGround(){ctx.fillStyle='green';ctx.fillRect(0,332,800,16);}
-function drawClouds(){ctx.fillStyle='gray';clouds.forEach(c=>ctx.fillRect(c.x,c.y,c.size,c.size/2));}
+function getColorTransition() {
+    return currentTransition;
+}
 
-function drawPlayer(){let recoilOffset=player.recoil>0?-2:0;ctx.fillStyle='white';ctx.fillRect(player.x+recoilOffset,player.y-16,player.w,player.h);ctx.fillStyle='black';ctx.fillRect(player.x+2+recoilOffset,player.y-12,12,4);ctx.fillStyle='white';let legSwing=Math.sin(player.frame*0.3)*2;ctx.fillRect(player.x-2+recoilOffset,player.y+16+legSwing,4,8);ctx.fillRect(player.x+14+recoilOffset,player.y+16-legSwing,4,8);ctx.fillStyle='blue';ctx.fillRect(player.x-4+recoilOffset,player.y-10,4,2);if(player.swinging){ctx.strokeStyle='silver';ctx.lineWidth=4;let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+swingLength*Math.cos(angle),sy-swingLength*Math.sin(angle));ctx.stroke();}}
+function drawStars(){
+    let t = getColorTransition();
+    
+    // Background: #111 to #FFF (White)
+    let bg = Math.floor(17 + t * (255 - 17)); 
+    ctx.fillStyle = `rgb(${bg},${bg},${bg})`;
+    ctx.fillRect(0,0,800,400);
+    
+    // Stars: White to Black
+    let starC = Math.floor(255 - t * 255); 
+    stars.forEach(s=>{
+        ctx.fillStyle=`rgba(${starC},${starC},${starC},0.9)`;
+        ctx.fillRect(s.x,s.y,s.size,s.size);
+    });
+    
+    // Planets (Blue cloud things): Blue to Pink
+    planets.forEach(p=>{
+        let currentHue = p.hue + t * (330 - p.hue); 
+        let currentL = 45 + t * 30; // Brighten slightly when pink
+        ctx.fillStyle=`hsl(${currentHue} 70% ${currentL}%)`;
+        ctx.beginPath();
+        ctx.ellipse(p.x,p.y,p.size,p.size*0.6,0,0,Math.PI*2);
+        ctx.fill();
+        
+        ctx.fillStyle=`rgba(${starC},${starC},${starC},0.06)`;
+        ctx.beginPath();
+        ctx.ellipse(p.x-6,p.y-6,p.size*0.5,p.size*0.3,0,0,Math.PI*2);
+        ctx.fill();
+    });
+}
+
+function drawGround(){ctx.fillStyle='green';ctx.fillRect(0,332,800,16);}
+
+function drawClouds(){
+    let t = getColorTransition();
+    // Regular clouds: Gray to a light pinkish hue to match
+    let r = Math.floor(128 + t * (255 - 128)); 
+    let g = Math.floor(128 + t * (180 - 128));
+    let b = Math.floor(128 + t * (200 - 128));
+    ctx.fillStyle=`rgb(${r},${g},${b})`;
+    clouds.forEach(c=>ctx.fillRect(c.x,c.y,c.size,c.size/2));
+}
+
+function drawPlayer(){
+    let t = getColorTransition();
+    let bodyGray = Math.floor(255 - t * 150); // Transitions from 255 (white) to 105 (gray)
+    let bodyColor = `rgb(${bodyGray},${bodyGray},${bodyGray})`;
+    let recoilOffset=player.recoil>0?-2:0;
+    
+    ctx.fillStyle=bodyColor;
+    ctx.fillRect(player.x+recoilOffset,player.y-16,player.w,player.h);
+    
+    ctx.fillStyle='black';
+    ctx.fillRect(player.x+2+recoilOffset,player.y-12,12,4);
+    
+    ctx.fillStyle=bodyColor;
+    let legSwing=Math.sin(player.frame*0.3)*2;
+    ctx.fillRect(player.x-2+recoilOffset,player.y+16+legSwing,4,8);
+    ctx.fillRect(player.x+14+recoilOffset,player.y+16-legSwing,4,8);
+    
+    ctx.fillStyle='blue';
+    ctx.fillRect(player.x-4+recoilOffset,player.y-10,4,2);
+    
+    if(player.swinging){
+        ctx.strokeStyle='silver';ctx.lineWidth=4;let swingLength=40;let angle=Math.PI/4-(player.swingFrame/5)*(Math.PI/2);let sx=player.x+player.w/2,sy=player.y;
+        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+swingLength*Math.cos(angle),sy-swingLength*Math.sin(angle));ctx.stroke();
+    }
+}
 
 function drawEnemies(){
     enemies.forEach(e=>{
@@ -212,6 +280,21 @@ function spawnMuzzleFlash(){let flashWidth=4+Math.random()*4;muzzleFlashes.push(
 
 function update(){
     if(gameOver||!started)return;
+    
+    // Smooth, randomized background transitions past 2000 score
+    if(score >= 2000) {
+        if(transitionTimer <= 0) {
+            targetTransition = Math.random() > 0.4 ? 1 : 0; // Randomly target bright or dark
+            transitionTimer = 120 + Math.random() * 300; // Wait 2 to 7 seconds before switching
+        } else {
+            transitionTimer--;
+        }
+        currentTransition += (targetTransition - currentTransition) * 0.008;
+    } else {
+        currentTransition = 0;
+        targetTransition = 0;
+    }
+    
     player.frame++;
     player.vy+=gravity;
     if(keysDown['KeyS']&&player.jumping)player.vy+=fastFallPower;
@@ -319,6 +402,9 @@ function resetGame(){
     gameOver=false;obstacles=[];clouds=[];enemies=[];bullets=[];sparks=[];muzzleFlashes=[];
     player.y=300;player.vy=0;score=0;speed=5;frameCount=0;player.recoil=0;started=false;
     readyToStart = true;
+    currentTransition = 0;
+    targetTransition = 0;
+    transitionTimer = 0;
     AudioSys.stopMusic();
 }
 
